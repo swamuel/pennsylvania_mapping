@@ -1,0 +1,165 @@
+version: 2
+
+# Declares raw tables that already exist in DuckDB (loaded by our
+# Python scripts) so dbt models can reference them via source(),
+# rather than hardcoding bare table names.
+sources:
+  - name: raw
+    description: Raw indicates the landing layer for a dataset. This is generally a file directly as the python ingestion scripts land it into the duckDb.
+    # label used in source('raw', 'table') calls in .sql models
+    schema: main
+     # the actual DuckDB schema these tables live in
+    tables:
+      - name: tiger_county
+      - name: tiger_schooldistrict
+      - name: tiger_zcta
+      - name: emta_busstops
+      - name: osm_roads
+      - name: pa_bulk_election
+      - name: pa_house_1991
+      - name: pa_house_2001
+      - name: pa_house_2012
+      - name: pa_house_2021
+      - name: pa_senate_1991
+      - name: pa_senate_2001
+      - name: pa_senate_2012
+      - name: pa_senate_2021
+      - name: pa_voting_districts_2021
+      - name: pa_municipalities_2021
+        description: PA precinct-level general election returns, 1992-2024, loaded from the Department of State bulk files. All columns are varchar as loaded.
+      - name: tiger_censustract
+        description: Census Tracts are the Census Bureaus TIGER shape files for census tracts.
+        columns:
+          - name: GEOID
+      - name: pa_congressional_districts
+        description: PA Congressional district boundaries, Congresses 104-119, filtered to Pennsylvania, loaded by load_congressional_districts.py. Geometry is EPSG:4269.
+        columns:
+          - name: congress
+            description: Congress number taken from the source filename (e.g. 104).
+          - name: DISTRICT
+            description: District number, stored as a float in the shapefile.
+          - name: sourcefile
+            description: Zip filename the row came from.
+          - name: loaded_at
+            description: When the row was loaded into DuckDB.
+models:
+  - name: stg_census__tracts_geom
+    description: Staging view of Census tracts for Erie and Crawford counties,
+      selected from the raw TIGER shapefile source with no filtering
+      or transformation applied yet beyond column selection.
+    columns:
+      - name: GEOID
+        description: Unique Census tract identifier.
+      - name: NAME
+        description: Short tract name/number.
+      - name: COUNTYFP
+        description: County FIPS code (049 = Erie, 039 = Crawford).
+      - name: geom
+        description: Tract boundary polygon geometry, EPSG:4269.
+  - name: stg_pa__congressional_results
+  - name: stg_pa__election_returns
+  - name: stg_pa__congressional_district_results
+  - name: stg_lewis__congressional_districts_geom
+    description: PA Congressional districts for Congresses 104-119, with election year and integer district number.
+    columns:
+      - name: congress
+        data_tests: [ not_null ]
+      - name: district
+        data_tests: [ not_null ]
+      - name: geom
+        data_tests: [ not_null ]
+
+  - name: stg_emta__bus_stops_geom
+    description: Staging view of EMTA (Erie Metropolitan Transit Authority)
+      bus stop locations, selected from the raw GTFS stops.txt source
+      with no filtering or transformation applied yet beyond column selection.
+    columns:
+      - name: stop_id
+        description: Unique identifier for the stop, as assigned by EMTA's GTFS feed.
+      - name: stop_code
+        description: Short code for the stop, as published by EMTA.
+      - name: stop_name
+        description: Public-facing name of the stop.
+      - name: stop_lat
+        description: Stop latitude, decimal degrees.
+      - name: stop_lon
+        description: Stop longitude, decimal degrees.
+
+  - name: stg_osm__roads_geom
+    description: Staging view of the pedestrian road/path network from
+      OpenStreetMap, pulled via osmnx (network_type='walk') for Erie
+      County and converted from a graph to edge geometries. Filtered to
+      exclude motorway, motorway_link, trunk, trunk_link, service, and
+      track highway types, leaving primarily residential streets,
+      footways, paths, and other walkable ways. Note - this filter does
+      not currently catch rows where OSM tags multiple highway values
+      on a single way (e.g. a way tagged both 'service' and
+      'residential'), which are stored as a stringified list and won't
+      match the exclusion list — a known, small gap affecting a few
+      hundred of the ~145k rows.
+    columns:
+      - name: osmid
+        description: OpenStreetMap way identifier for the road/path segment.
+      - name: highway
+        description: OSM highway tag indicating the road/path type
+          (e.g. residential, footway, sidewalk).
+      - name: name
+        description: Street or path name, as tagged in OSM. May be null
+          for unnamed segments, or contain multiple names for ways
+          OSM tags with more than one.
+      - name: length
+        description: Segment length in meters.
+      - name: access
+        description: OSM access tag, if present, indicating restrictions
+          (e.g. private). Mostly null, since most ways don't carry
+          an explicit access tag.
+      - name: geometry
+        description: Line geometry of the road/path segment.
+  - name: stg_census__county_geom
+    description: Staging view of county boundaries for Pennsylvania,
+      selected from the raw national TIGER county shapefile source
+      with no filtering or transformation applied yet beyond column
+      selection.
+    columns:
+      - name: osmid
+        description: OpenStreetMap way identifier for the road/path segment.
+      - name: highway
+        description: OSM highway tag indicating the road/path type
+          (e.g. residential, footway, sidewalk).
+      - name: name
+        description: Street or path name, as tagged in OSM. May be null
+          for unnamed segments, or contain multiple names for ways
+          OSM tags with more than one.
+      - name: length
+        description: Segment length in meters.
+      - name: access
+        description: OSM access tag, if present, indicating restrictions
+          (e.g. private). Mostly null, since most ways don't carry
+          an explicit access tag.
+      - name: geometry
+        description: Line geometry of the road/path segment.
+
+  - name: stg_census__zcta_geom
+    description: Staging view of 2020 Census ZIP Code Tabulation Areas
+      (ZCTAs), selected from the raw national TIGER ZCTA520 shapefile
+      source. ZCTAs are approximations of USPS ZIP code boundaries and
+      do not align with county or state lines, so no county/state
+      filtering has been applied at this stage.
+    columns:
+      - name: GEOID20
+        description: 5-digit ZCTA identifier (approximates a ZIP code).
+      - name: geom
+        description: ZCTA boundary polygon geometry.
+
+  - name: stg_census__schooldistrict_geom
+    description: Staging view of Pennsylvania unified school district
+      (UNSD) boundaries, selected from the raw state-level TIGER UNSD
+      shapefile source with no filtering or transformation applied yet
+      beyond column selection.
+    columns:
+      - name: GEOID
+        description: Unique school district identifier.
+      - name: NAME
+        description: School district name.
+      - name: geom
+        description: School district boundary polygon geometry.
